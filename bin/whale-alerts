@@ -1,0 +1,284 @@
+#!/usr/bin/env node
+
+/**
+ * Alert Management CLI for Binance Whale Tracker
+ */
+
+const { Command } = require('commander');
+const chalk = require('chalk');
+const { WhaleTracker } = require('../src');
+const fs = require('fs').promises;
+const path = require('path');
+
+const program = new Command();
+
+program
+    .name('whale-alerts')
+    .description('Manage price and whale movement alerts')
+    .version('1.0.0');
+
+// Add alert command
+program
+    .command('add <symbol> <price>')
+    .description('Add a new price alert')
+    .option('-t, --type <type>', 'Alert type (above/below)', 'above')
+    .option('-m, --message <message>', 'Custom alert message')
+    .option('--telegram', 'Enable Telegram notification', true)
+    .option('--email <email>', 'Email notification address')
+    .action(async (symbol, price, options) => {
+        try {
+            console.log(chalk.cyan('\n➕ Adding new alert...\n'));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            const alert = await tracker.addAlert(
+                symbol.toUpperCase(),
+                parseFloat(price),
+                options.type,
+                {
+                    message: options.message,
+                    telegram: options.telegram,
+                    email: options.email
+                }
+            );
+
+            console.log(chalk.green('✅ Alert created successfully!'));
+            console.log(chalk.white('\nAlert Details:'));
+            console.log(`  ID: ${alert.id}`);
+            console.log(`  Symbol: ${alert.symbol}`);
+            console.log(`  Price: $${alert.price}`);
+            console.log(`  Type: ${alert.type}`);
+            console.log(`  Status: ${alert.status}`);
+
+            await tracker.shutdown();
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// List alerts command
+program
+    .command('list')
+    .description('List all active alerts')
+    .option('-s, --symbol <symbol>', 'Filter by symbol')
+    .action(async (options) => {
+        try {
+            console.log(chalk.cyan('\n📋 Active Alerts\n'));
+
+            const alertsFile = path.join(process.cwd(), '.alerts.json');
+
+            try {
+                const data = await fs.readFile(alertsFile, 'utf8');
+                const alerts = JSON.parse(data);
+
+                let filtered = alerts;
+                if (options.symbol) {
+                    filtered = alerts.filter(a => a.symbol === options.symbol.toUpperCase());
+                }
+
+                if (filtered.length === 0) {
+                    console.log(chalk.yellow('No active alerts found'));
+                } else {
+                    displayAlerts(filtered);
+                }
+            } catch (err) {
+                console.log(chalk.yellow('No alerts configured yet'));
+            }
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Remove alert command
+program
+    .command('remove <alertId>')
+    .description('Remove an alert by ID')
+    .action(async (alertId) => {
+        try {
+            console.log(chalk.cyan('\n🗑️  Removing alert...\n'));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            await tracker.removeAlert(alertId);
+
+            console.log(chalk.green('✅ Alert removed successfully!'));
+            await tracker.shutdown();
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Test alerts command
+program
+    .command('test [symbol]')
+    .description('Test alert notifications')
+    .option('--telegram', 'Test Telegram notification')
+    .option('--email <email>', 'Test email notification')
+    .action(async (symbol = 'BTCUSDT', options) => {
+        try {
+            console.log(chalk.cyan('\n🧪 Testing alert notifications...\n'));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            if (options.telegram) {
+                console.log(chalk.yellow('📱 Sending test Telegram message...'));
+                // Trigger test Telegram message
+                tracker.emit('alert_triggered', {
+                    type: 'TEST',
+                    symbol: symbol,
+                    message: `Test alert for ${symbol} - If you see this, Telegram is working! 🎉`,
+                    price: 50000
+                });
+            }
+
+            if (options.email) {
+                console.log(chalk.yellow(`📧 Sending test email to ${options.email}...`));
+                // Email test would go here
+                console.log(chalk.gray('Email notifications not yet implemented'));
+            }
+
+            console.log(chalk.green('\n✅ Test notifications sent!'));
+            console.log(chalk.gray('Check your Telegram/Email for test messages\n'));
+
+            await tracker.shutdown();
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Watch command for real-time monitoring
+program
+    .command('watch')
+    .description('Watch for alert triggers in real-time')
+    .option('-s, --symbols <symbols...>', 'Symbols to watch', ['BTCUSDT', 'ETHUSDT'])
+    .action(async (options) => {
+        try {
+            console.log(chalk.cyan('\n👁️  Alert Watcher Active\n'));
+            console.log(chalk.gray(`Watching: ${options.symbols.join(', ')}\n`));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            // Set up alert trigger listener
+            tracker.on('alert_triggered', (alert) => {
+                const timestamp = new Date().toLocaleTimeString();
+                const color = alert.type === 'above' ? chalk.green : chalk.red;
+                console.log(color(`[${timestamp}] 🔔 ALERT: ${alert.symbol} ${alert.type} $${alert.price}`));
+                if (alert.message) {
+                    console.log(chalk.yellow(`   ${alert.message}`));
+                }
+            });
+
+            tracker.on('price_update', (update) => {
+                // Show price updates
+                process.stdout.write(
+                    `\r${chalk.gray('Current prices:')} ` +
+                    `${update.symbol}: $${update.price.toFixed(2)}`
+                );
+            });
+
+            // Start monitoring
+            for (const symbol of options.symbols) {
+                await tracker.startMonitoring(symbol, {
+                    price: true,
+                    technical: false,
+                    exchangeFlow: false
+                });
+            }
+
+            console.log(chalk.green('✅ Watching for alerts...'));
+            console.log(chalk.gray('Press Ctrl+C to stop\n'));
+
+            // Handle shutdown
+            process.on('SIGINT', async () => {
+                console.log(chalk.yellow('\n\nStopping alert watcher...'));
+                await tracker.shutdown();
+                process.exit(0);
+            });
+
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Configure notifications
+program
+    .command('config')
+    .description('Configure notification settings')
+    .option('--telegram-token <token>', 'Set Telegram bot token')
+    .option('--telegram-chat <chatId>', 'Set Telegram chat ID')
+    .option('--show', 'Show current configuration')
+    .action(async (options) => {
+        try {
+            const configFile = path.join(process.cwd(), '.whale-tracker-config.json');
+
+            if (options.show) {
+                try {
+                    const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
+                    console.log(chalk.cyan('\n⚙️  Current Configuration\n'));
+                    console.log(chalk.white('Telegram:'));
+                    console.log(`  Bot Token: ${config.telegram?.botToken ? '***' + config.telegram.botToken.slice(-4) : 'Not set'}`);
+                    console.log(`  Chat ID: ${config.telegram?.chatId || 'Not set'}`);
+                } catch {
+                    console.log(chalk.yellow('No configuration found'));
+                }
+                return;
+            }
+
+            let config = {};
+            try {
+                config = JSON.parse(await fs.readFile(configFile, 'utf8'));
+            } catch {
+                // File doesn't exist, create new config
+            }
+
+            if (options.telegramToken || options.telegramChat) {
+                config.telegram = config.telegram || {};
+                if (options.telegramToken) config.telegram.botToken = options.telegramToken;
+                if (options.telegramChat) config.telegram.chatId = options.telegramChat;
+
+                await fs.writeFile(configFile, JSON.stringify(config, null, 2));
+                console.log(chalk.green('✅ Configuration saved!'));
+            }
+
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Helper function to display alerts
+function displayAlerts(alerts) {
+    console.log(chalk.white('ID\t\tSymbol\t\tPrice\t\tType\t\tStatus'));
+    console.log('-'.repeat(70));
+
+    alerts.forEach(alert => {
+        const typeColor = alert.type === 'above' ? chalk.green : chalk.red;
+        const statusColor = alert.status === 'active' ? chalk.green :
+                          alert.status === 'triggered' ? chalk.yellow : chalk.gray;
+
+        console.log(
+            `${alert.id.substring(0, 8)}\t` +
+            `${alert.symbol.padEnd(12)}` +
+            `$${alert.price.toFixed(2).padEnd(12)}` +
+            typeColor(`${alert.type.padEnd(12)}`) +
+            statusColor(alert.status)
+        );
+    });
+
+    console.log(`\nTotal: ${alerts.length} alert(s)`);
+}
+
+program.parse(process.argv);
+
+if (!process.argv.slice(2).length) {
+    program.outputHelp();
+}

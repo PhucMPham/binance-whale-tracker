@@ -1,0 +1,226 @@
+#!/usr/bin/env node
+
+/**
+ * Whale Monitoring CLI for Binance Whale Tracker
+ */
+
+const { Command } = require('commander');
+const chalk = require('chalk');
+const { WhaleTracker } = require('../src');
+
+const program = new Command();
+
+program
+    .name('whale-monitor')
+    .description('Monitor whale movements and exchange flows')
+    .version('1.0.0');
+
+// Monitor whales command
+program
+    .command('whales [symbol]')
+    .description('Monitor whale movements for a specific symbol (default: ETH)')
+    .option('-t, --threshold <amount>', 'Whale threshold amount', '1000')
+    .option('-e, --exchange <exchange>', 'Specific exchange or "all"', 'all_exchange')
+    .option('-i, --interval <seconds>', 'Check interval in seconds', '300')
+    .option('--btc', 'Monitor BTC instead of ETH')
+    .action(async (symbol = 'ETH', options) => {
+        try {
+            if (options.btc) symbol = 'BTC';
+
+            console.log(chalk.cyan(`\n🐋 Starting Whale Monitor for ${symbol}...\n`));
+            console.log(chalk.gray(`Exchange: ${options.exchange}`));
+            console.log(chalk.gray(`Threshold: ${options.threshold} ${symbol}`));
+            console.log(chalk.gray(`Check Interval: ${options.interval}s\n`));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            // Set up whale detection listeners
+            tracker.on('whale_detected', (whale) => {
+                const timestamp = new Date().toLocaleTimeString();
+                const color = whale.type === 'INFLOW' ? chalk.red : chalk.green;
+                console.log(color(`[${timestamp}] 🐋 WHALE ${whale.type}: ${whale.amount} ${whale.symbol}`));
+                if (whale.message) {
+                    console.log(chalk.yellow(`   ${whale.message}`));
+                }
+            });
+
+            tracker.on('flow_alert', (alert) => {
+                const timestamp = new Date().toLocaleTimeString();
+                console.log(chalk.magenta(`[${timestamp}] 📊 ${alert.message}`));
+            });
+
+            // Start monitoring
+            await tracker.startMonitoring(`${symbol}USDT`, {
+                exchangeFlow: true,
+                technical: false,
+                price: false,
+                whaleThreshold: parseFloat(options.threshold),
+                exchange: options.exchange,
+                interval: options.interval
+            });
+
+            console.log(chalk.green('✅ Whale monitoring started!'));
+            console.log(chalk.gray('Press Ctrl+C to stop\n'));
+
+            // Handle shutdown
+            process.on('SIGINT', async () => {
+                console.log(chalk.yellow('\n\nStopping whale monitor...'));
+                await tracker.shutdown();
+                process.exit(0);
+            });
+
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Monitor exchange flows
+program
+    .command('flows [symbol]')
+    .description('Monitor exchange inflow/outflow')
+    .option('-e, --exchange <exchange>', 'Exchange name', 'all_exchange')
+    .option('--critical-inflow <amount>', 'Critical inflow threshold', '5000')
+    .option('--critical-outflow <amount>', 'Critical outflow threshold', '10000')
+    .action(async (symbol = 'ETH', options) => {
+        try {
+            console.log(chalk.cyan(`\n📊 Monitoring Exchange Flows for ${symbol}...\n`));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            // Get initial flows
+            const flows = await tracker.getExchangeFlows(symbol, {
+                exchange: options.exchange
+            });
+
+            displayFlows(flows, symbol);
+
+            // Monitor continuously
+            setInterval(async () => {
+                try {
+                    const newFlows = await tracker.getExchangeFlows(symbol, {
+                        exchange: options.exchange
+                    });
+
+                    console.clear();
+                    console.log(chalk.cyan(`\n📊 Exchange Flows - ${new Date().toLocaleTimeString()}\n`));
+                    displayFlows(newFlows, symbol);
+
+                    // Check for critical levels
+                    if (newFlows.inflow?.total24h > parseFloat(options.criticalInflow)) {
+                        console.log(chalk.red('\n⚠️  CRITICAL INFLOW DETECTED - Potential selling pressure!'));
+                    }
+                    if (newFlows.outflow?.total24h > parseFloat(options.criticalOutflow)) {
+                        console.log(chalk.green('\n📈 HIGH OUTFLOW DETECTED - Accumulation phase!'));
+                    }
+                } catch (error) {
+                    console.error(chalk.red('Update error:'), error.message);
+                }
+            }, 30000); // Update every 30 seconds
+
+            // Handle shutdown
+            process.on('SIGINT', async () => {
+                console.log(chalk.yellow('\n\nStopping flow monitor...'));
+                await tracker.shutdown();
+                process.exit(0);
+            });
+
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Real-time alerts
+program
+    .command('alerts')
+    .description('Monitor real-time whale alerts')
+    .option('-s, --symbols <symbols...>', 'Symbols to monitor', ['BTCUSDT', 'ETHUSDT'])
+    .action(async (options) => {
+        try {
+            console.log(chalk.cyan('\n🔔 Real-time Whale Alert Monitor\n'));
+            console.log(chalk.gray(`Monitoring: ${options.symbols.join(', ')}\n`));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            // Set up all event listeners
+            tracker.on('whale_detected', (whale) => {
+                const timestamp = new Date().toLocaleTimeString();
+                console.log(chalk.magenta(`[${timestamp}] 🐋 ${whale.symbol}: ${whale.amount} ${whale.type}`));
+            });
+
+            tracker.on('flow_alert', (alert) => {
+                const timestamp = new Date().toLocaleTimeString();
+                const color = alert.severity === 'high' ? chalk.red : chalk.yellow;
+                console.log(color(`[${timestamp}] ⚠️  ${alert.message}`));
+            });
+
+            tracker.on('price_alert', (alert) => {
+                const timestamp = new Date().toLocaleTimeString();
+                console.log(chalk.cyan(`[${timestamp}] 💰 ${alert.symbol}: $${alert.price}`));
+            });
+
+            // Start monitoring all symbols
+            for (const symbol of options.symbols) {
+                await tracker.startMonitoring(symbol);
+            }
+
+            console.log(chalk.green('✅ Alert monitoring active!'));
+            console.log(chalk.gray('Waiting for whale activity...\n'));
+
+            // Handle shutdown
+            process.on('SIGINT', async () => {
+                console.log(chalk.yellow('\n\nStopping alert monitor...'));
+                await tracker.shutdown();
+                process.exit(0);
+            });
+
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Helper function to display flows
+function displayFlows(flows, symbol) {
+    if (!flows) {
+        console.log(chalk.yellow('No flow data available'));
+        return;
+    }
+
+    console.log(chalk.white('📥 Inflow (24h):'));
+    if (flows.inflow) {
+        console.log(`  Total: ${flows.inflow.total24h?.toFixed(2) || 'N/A'} ${symbol}`);
+        console.log(`  Whale: ${flows.inflow.whaleVolume?.toFixed(2) || 'N/A'} ${symbol}`);
+        console.log(`  Transactions: ${flows.inflow.transactions || 'N/A'}`);
+    }
+
+    console.log(chalk.white('\n📤 Outflow (24h):'));
+    if (flows.outflow) {
+        console.log(`  Total: ${flows.outflow.total24h?.toFixed(2) || 'N/A'} ${symbol}`);
+        console.log(`  Whale: ${flows.outflow.whaleVolume?.toFixed(2) || 'N/A'} ${symbol}`);
+        console.log(`  Transactions: ${flows.outflow.transactions || 'N/A'}`);
+    }
+
+    if (flows.netflow) {
+        const netBalance = flows.netflow.netBalance || 0;
+        const color = netBalance > 0 ? chalk.red : chalk.green;
+        const direction = netBalance > 0 ? '↑ Net Inflow' : '↓ Net Outflow';
+        console.log(chalk.white('\n🔄 Net Flow:'));
+        console.log(color(`  ${direction}: ${Math.abs(netBalance).toFixed(2)} ${symbol}`));
+    }
+
+    if (flows.marketImpact) {
+        const impactColor = flows.marketImpact === 'BEARISH' ? chalk.red : chalk.green;
+        console.log(chalk.white('\n📈 Market Impact:'), impactColor(flows.marketImpact));
+    }
+}
+
+program.parse(process.argv);
+
+if (!process.argv.slice(2).length) {
+    program.outputHelp();
+}

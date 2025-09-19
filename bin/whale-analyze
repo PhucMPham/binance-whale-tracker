@@ -1,0 +1,184 @@
+#!/usr/bin/env node
+
+/**
+ * Technical Analysis CLI for Binance Whale Tracker
+ */
+
+const { Command } = require('commander');
+const chalk = require('chalk');
+const { WhaleTracker } = require('../src');
+
+const program = new Command();
+
+program
+    .name('whale-analyze')
+    .description('Perform technical analysis on cryptocurrency pairs')
+    .version('1.0.0');
+
+// Analyze coin command
+program
+    .command('coin <symbol>')
+    .description('Analyze a specific cryptocurrency pair')
+    .option('-i, --interval <interval>', 'Time interval (1m, 5m, 15m, 1h, 4h, 1d)', '1h')
+    .option('-p, --period <period>', 'Analysis period in candles', '100')
+    .option('--rsi', 'Include RSI analysis')
+    .option('--macd', 'Include MACD analysis')
+    .option('--bb', 'Include Bollinger Bands')
+    .option('--all', 'Include all indicators')
+    .option('-o, --output <format>', 'Output format (json, table)', 'table')
+    .action(async (symbol, options) => {
+        try {
+            console.log(chalk.cyan(`\n📊 Analyzing ${symbol.toUpperCase()}...\n`));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            const analysis = await tracker.analyzeCoin(symbol.toUpperCase(), {
+                interval: options.interval,
+                period: parseInt(options.period),
+                indicators: {
+                    rsi: options.rsi || options.all,
+                    macd: options.macd || options.all,
+                    bb: options.bb || options.all
+                }
+            });
+
+            if (options.output === 'json') {
+                console.log(JSON.stringify(analysis, null, 2));
+            } else {
+                displayAnalysis(analysis);
+            }
+
+            await tracker.shutdown();
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Multiple coins comparison
+program
+    .command('compare <symbols...>')
+    .description('Compare multiple cryptocurrency pairs')
+    .option('-i, --interval <interval>', 'Time interval', '1h')
+    .action(async (symbols, options) => {
+        try {
+            console.log(chalk.cyan('\n📊 Comparing cryptocurrencies...\n'));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            const results = [];
+            for (const symbol of symbols) {
+                const analysis = await tracker.analyzeCoin(symbol.toUpperCase(), {
+                    interval: options.interval
+                });
+                results.push({
+                    symbol: symbol.toUpperCase(),
+                    ...analysis
+                });
+            }
+
+            displayComparison(results);
+            await tracker.shutdown();
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Market scan
+program
+    .command('scan')
+    .description('Scan market for trading opportunities')
+    .option('--bullish', 'Find bullish setups')
+    .option('--bearish', 'Find bearish setups')
+    .option('--volume', 'High volume movers')
+    .action(async (options) => {
+        try {
+            console.log(chalk.cyan('\n🔍 Scanning market...\n'));
+
+            const tracker = new WhaleTracker();
+            await tracker.initialize();
+
+            const topSymbols = [
+                'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'
+            ];
+
+            const opportunities = [];
+            for (const symbol of topSymbols) {
+                const analysis = await tracker.analyzeCoin(symbol, {
+                    interval: '1h'
+                });
+
+                if (options.bullish && analysis.signal === 'BULLISH') {
+                    opportunities.push({ symbol, ...analysis });
+                } else if (options.bearish && analysis.signal === 'BEARISH') {
+                    opportunities.push({ symbol, ...analysis });
+                } else if (options.volume && analysis.volumeChange > 50) {
+                    opportunities.push({ symbol, ...analysis });
+                }
+            }
+
+            if (opportunities.length > 0) {
+                console.log(chalk.green(`Found ${opportunities.length} opportunities:\n`));
+                opportunities.forEach(opp => {
+                    const color = opp.signal === 'BULLISH' ? chalk.green : chalk.red;
+                    console.log(color(`  ${opp.symbol}: ${opp.signal} - Price: $${opp.currentPrice}`));
+                });
+            } else {
+                console.log(chalk.yellow('No opportunities found with current criteria'));
+            }
+
+            await tracker.shutdown();
+        } catch (error) {
+            console.error(chalk.red('Error:'), error.message);
+            process.exit(1);
+        }
+    });
+
+// Helper function to display analysis
+function displayAnalysis(analysis) {
+    console.log(chalk.white('Price Information:'));
+    console.log(`  Current: $${analysis.currentPrice}`);
+    console.log(`  24h Change: ${analysis.change24h}%`);
+    console.log(`  24h Volume: $${analysis.volume24h}`);
+
+    console.log(chalk.white('\nTechnical Indicators:'));
+    if (analysis.rsi) console.log(`  RSI(14): ${analysis.rsi.toFixed(2)}`);
+    if (analysis.macd) console.log(`  MACD: ${analysis.macd.histogram.toFixed(4)}`);
+
+    console.log(chalk.white('\nKey Levels:'));
+    console.log(`  Support: $${analysis.support}`);
+    console.log(`  Resistance: $${analysis.resistance}`);
+
+    const signalColor = analysis.signal === 'BULLISH' ? chalk.green :
+                       analysis.signal === 'BEARISH' ? chalk.red : chalk.yellow;
+    console.log(chalk.white('\nSignal:'), signalColor(analysis.signal));
+}
+
+// Helper function to display comparison
+function displayComparison(results) {
+    console.log(chalk.white('Symbol\t\tPrice\t\t24h%\t\tRSI\t\tSignal'));
+    console.log('-'.repeat(70));
+
+    results.forEach(r => {
+        const changeColor = r.change24h > 0 ? chalk.green : chalk.red;
+        const signalColor = r.signal === 'BULLISH' ? chalk.green :
+                           r.signal === 'BEARISH' ? chalk.red : chalk.yellow;
+
+        console.log(
+            `${r.symbol.padEnd(12)}` +
+            `$${r.currentPrice.toFixed(2).padEnd(12)}` +
+            changeColor(`${r.change24h.toFixed(2)}%`.padEnd(12)) +
+            `${r.rsi ? r.rsi.toFixed(2) : 'N/A'}`.padEnd(12) +
+            signalColor(r.signal)
+        );
+    });
+}
+
+program.parse(process.argv);
+
+if (!process.argv.slice(2).length) {
+    program.outputHelp();
+}
