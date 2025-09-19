@@ -1,8 +1,11 @@
 # 🐋 Binance Whale Tracker
 
+[![GitHub repo](https://img.shields.io/badge/GitHub-PhucMPham%2Fbinance--whale--tracker-blue)](https://github.com/PhucMPham/binance-whale-tracker)
 [![npm version](https://img.shields.io/npm/v/binance-whale-tracker.svg)](https://www.npmjs.com/package/binance-whale-tracker)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen)](https://nodejs.org)
+[![GitHub stars](https://img.shields.io/github/stars/PhucMPham/binance-whale-tracker)](https://github.com/PhucMPham/binance-whale-tracker/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/PhucMPham/binance-whale-tracker)](https://github.com/PhucMPham/binance-whale-tracker/issues)
 
 Professional cryptocurrency trading toolkit with whale monitoring, technical analysis, and automated alerts for Binance.
 
